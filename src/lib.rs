@@ -377,6 +377,7 @@ pub enum Error {
 mod test {
 
     use std::{
+        borrow::{Borrow, Cow},
         io::{self, sink, BufRead, BufReader},
         sync::{Arc, Mutex, MutexGuard, Once, TryLockError},
     };
@@ -617,5 +618,40 @@ mod test {
         assert_string(result[1].get("same"), Some("same1"));
         assert_string(result[2].get("same"), Some("same2"));
         assert_string(result[3].get("same"), Some("last prevails"));
+    }
+
+    #[test]
+    fn test_attribute_mapping() {
+        let result = run_test(
+            ECSLayerBuilder::default().with_attribute_mapper(
+                // this mapper will change "key1" name into "foobar" only in the "span1" span
+                |span_name: &str, name: Cow<'static, str>| match span_name {
+                    "span1" => match name.borrow() {
+                        "key1" => "foobar".into(),
+                        _ => name,
+                    },
+                    _ => name,
+                },
+            ),
+            || {
+                let sp1 = tracing::info_span!("span1", key1 = "val1", other1 = "o1");
+                let _enter1 = sp1.enter();
+                tracing::info!("inside 1");
+                let sp2 = tracing::info_span!("span2", key1 = "val2", other2 = "o2");
+                let _enter2 = sp2.enter();
+                tracing::info!("inside 2");
+            },
+        );
+
+        // span1 => key1 has been renamed
+        assert_string(result[0].get("key1"), None);
+        assert_string(result[0].get("foobar"), Some("val1"));
+        assert_string(result[0].get("other1"), Some("o1"));
+        assert_string(result[0].get("other2"), None);
+        // span2 => key1 renamed in span1... but also defined in span2
+        assert_string(result[1].get("key1"), Some("val2"));
+        assert_string(result[1].get("foobar"), Some("val1"));
+        assert_string(result[1].get("other1"), Some("o1"));
+        assert_string(result[1].get("other2"), Some("o2"));
     }
 }
