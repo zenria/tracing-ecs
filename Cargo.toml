@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zenria/tracing-ecs"
 description = "Tracing subscriber that output ECS (Elastic Common Schema) JSON log lines"
-keywords = ["mhz19", "mh-z19", "mh_z19"]
+keywords = ["tracing", "elastic", "ecs", "logging"]
 categories = ["tracing", "logging"]
 authors = ["Philippe GASSMANN <philoops@gmail.com>"]
 
