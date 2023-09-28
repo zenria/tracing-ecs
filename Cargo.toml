@@ -1,0 +1,22 @@
+[package]
+name = "tracing-ecs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zenria/tracing-ecs"
+description = "Tracing subscriber that output ECS (Elastic Common Schema) JSON log lines"
+keywords = ["mhz19", "mh-z19", "mh_z19"]
+categories = ["tracing", "logging"]
+authors = ["Philippe GASSMANN <philoops@gmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-core = "0.1"
+thiserror = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-log = "0.1"
+chrono = "0.4"
