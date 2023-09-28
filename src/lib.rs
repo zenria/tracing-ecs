@@ -95,7 +95,6 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
 mod ser;
-pub mod utils;
 mod visitor;
 
 /// This span_name is used when processing event attributes
@@ -382,7 +381,6 @@ mod test {
         sync::{Arc, Mutex, MutexGuard, Once, TryLockError},
     };
 
-    use serde::Serialize;
     use serde_json::{json, Map, Value};
     use tracing_log::LogTracer;
     use tracing_subscriber::{
@@ -390,10 +388,7 @@ mod test {
         Layer,
     };
 
-    use crate::{
-        utils::{Labels, Tags},
-        ECSLayerBuilder,
-    };
+    use crate::ECSLayerBuilder;
 
     static START: Once = Once::new();
 
@@ -471,12 +466,6 @@ mod test {
             ret.push(serde_json::from_str(&line).expect("Invalid json line"));
         }
         ret
-    }
-
-    #[derive(Serialize)]
-    struct ExtraTestField {
-        tags: Tags,
-        labels: Labels,
     }
 
     /// General tests
