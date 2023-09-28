@@ -92,6 +92,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::SubscriberBuilder;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
 mod ser;
@@ -131,13 +132,20 @@ impl<W> ECSLayer<W>
 where
     W: for<'writer> MakeWriter<'writer> + 'static + Send + Sync,
 {
-    /// Installs the layer in a no-output tracing subscriber.
+    /// Installs the layer in a no-output tracing subscriber. The tracing subscriber is configured with
+    /// the default `EnvFilter`.
     ///
     /// This also takes care of installing the [`tracing-log`](https://crates.io/crates/tracing-log)
     /// compatibility layer so regular logging done from the [`log` crate](https://crates.io/crates/log)
     ///
+    /// This is an opinionated way to use this layer. Look at the source of this method if you want a tight control
+    /// of how the underlying is constructed or to disable classic logs to be output along tracing events...
+    ///
     pub fn install(self) -> Result<(), Error> {
-        let noout = SubscriberBuilder::default().with_writer(sink).finish();
+        let noout = SubscriberBuilder::default()
+            .with_writer(sink)
+            .with_env_filter(EnvFilter::default())
+            .finish();
         let subscriber = self.with_subscriber(noout);
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
             subscriber,
