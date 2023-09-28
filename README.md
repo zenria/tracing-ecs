@@ -2,9 +2,15 @@
 
 Tracing subscriber that outputs json log lines in the ECS ([Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/ecs-reference.html)) log format.
 
-## Status
+## Usage
 
-**Work in Progess**
+```rust
+use tracing_ecs::ECSLayerBuilder;
+ECSLayerBuilder::default()
+    .stdout()
+    .install()
+    .unwrap()
+```
 
 ## License
 

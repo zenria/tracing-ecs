@@ -16,13 +16,15 @@
 //! static extra fields have the same keys as some span attributes, or if
 //! an attribute is named `message` (which shall be reserved to the logged event).
 //!
-//! This behaviour can be customized by implementing the [`AttributeMapper`](trait.AttributeMapper.html) trait.
+//! This behavior can be customized by implementing the [`AttributeMapper`](trait.AttributeMapper.html) trait.
 //!
 //! # Examples
 //!
 //! Install a default subscriber that outputs json to stdout:
 //!
 //! ```rust
+//! use tracing_ecs::ECSLayerBuilder;
+//!
 //! ECSLayerBuilder::default()
 //!     .stdout()
 //!     .install()
@@ -35,6 +37,7 @@
 //!
 //! ```rust
 //! use serde_json::json;
+//! use tracing_ecs::ECSLayerBuilder;
 //!
 //! ECSLayerBuilder::default()
 //!     .with_extra_fields(json!({
@@ -52,6 +55,10 @@
 //! With attributes name mapping:
 //!
 //! ```rust
+//! use tracing_ecs::ECSLayerBuilder;
+//! use std::borrow::Cow;
+//! use std::ops::Deref;
+//!
 //! ECSLayerBuilder::default()
 //!  .with_attribute_mapper(
 //!     |_span_name: &str, name: Cow<'static, str>| match name.deref() {
@@ -62,6 +69,8 @@
 //! ```
 use chrono::Utc;
 use ser::ECSLogLine;
+use ser::LogFile;
+use ser::LogOrigin;
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value;
@@ -69,11 +78,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
 use std::io::sink;
-use std::io::stderr;
-use std::io::stdout;
 use std::io::Stderr;
 use std::io::{Stdout, Write};
-use std::sync::Mutex;
 use tracing_core::dispatcher::SetGlobalDefaultError;
 use tracing_core::span::Attributes;
 use tracing_core::span::Id;
@@ -93,7 +99,7 @@ pub mod utils;
 mod visitor;
 
 /// This span_name is used when processing event attributes
-pub const EVENT_SPAN_NAME: &'static str = "__EVENT__";
+pub const EVENT_SPAN_NAME: &str = "__EVENT__";
 
 /// Map span attributes to record name
 pub trait AttributeMapper: Send + Sync + 'static {
@@ -132,7 +138,7 @@ where
     /// compatibility layer so regular logging done from the [`log` crate](https://crates.io/crates/log)
     ///
     pub fn install(self) -> Result<(), Error> {
-        let noout = SubscriberBuilder::default().with_writer(|| sink()).finish();
+        let noout = SubscriberBuilder::default().with_writer(sink).finish();
         let subscriber = self.with_subscriber(noout);
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
             subscriber,
@@ -218,7 +224,7 @@ where
         // Insert level
         let metadata = event.metadata();
         let level = metadata.level().as_str();
-        let target = metadata.target();
+        let mut target = metadata.target().to_string();
 
         // extract fields
         let mut fields = HashMap::with_capacity(16);
@@ -228,16 +234,37 @@ where
             self.attribute_mapper.as_ref(),
         );
         event.record(&mut visitor);
+
+        // detect classic log message and convert them to our format
+        let mut log_origin = LogOrigin::from(metadata);
+        if target == "log"
+            && fields.contains_key("log.target")
+            && fields.contains_key("log.module_path")
+        {
+            fields.remove("log.module_path");
+            target = value_to_string(fields.remove("log.target").unwrap()); // this is tested in the if condition
+
+            if let (Some(file), Some(line)) = (fields.remove("log.file"), fields.remove("log.line"))
+            {
+                log_origin = LogOrigin {
+                    file: LogFile {
+                        line: line.as_u64().and_then(|u| u32::try_from(u).ok()),
+                        name: file.as_str().map(|file| file.to_owned().into()),
+                    },
+                }
+            }
+        }
+
         let message = fields
             .remove("message")
-            .map(|v| v.to_string())
+            .map(value_to_string)
             .unwrap_or_default();
         let line = ECSLogLine {
             timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             message,
             level,
-            log_origin: metadata.into(),
-            logger: target,
+            log_origin,
+            logger: &target,
             dynamic_fields: self
                 .extra_fields
                 .iter()
@@ -260,13 +287,22 @@ where
     }
 }
 
+fn value_to_string(value: Value) -> String {
+    match value {
+        Value::String(string) => string,
+        _ => value.to_string(),
+    }
+}
+
 /// Builder for a subscriber Layer writing ECS compatible json lines to a writer.
 ///
 /// Example:
 ///
 /// ```rust
+/// use tracing_ecs::ECSLayerBuilder;
+///
 /// // creates a minimal layer logging to stdout, and install it
-/// ECSLoggerBuilder::default()
+/// ECSLayerBuilder::default()
 ///     .stdout()
 ///     .install()
 ///     .unwrap();
@@ -306,14 +342,14 @@ impl ECSLayerBuilder {
     }
 
     pub fn stderr(self) -> ECSLayer<fn() -> Stderr> {
-        self.with_writer(io::stderr)
+        self.build_with_writer(io::stderr)
     }
 
     pub fn stdout(self) -> ECSLayer<fn() -> Stdout> {
-        self.with_writer(io::stdout)
+        self.build_with_writer(io::stdout)
     }
 
-    pub fn with_writer<W>(self, writer: W) -> ECSLayer<W>
+    pub fn build_with_writer<W>(self, writer: W) -> ECSLayer<W>
     where
         W: for<'writer> MakeWriter<'writer> + 'static,
     {
@@ -340,17 +376,101 @@ pub enum Error {
 #[cfg(test)]
 mod test {
 
-    use std::{borrow::Cow, ops::Deref};
+    use std::{
+        io::{self, sink, BufRead, BufReader},
+        sync::{Arc, Mutex, MutexGuard, Once, TryLockError},
+    };
 
     use serde::Serialize;
-    use serde_json::json;
-    use tracing::span;
-    use tracing_core::Level;
+    use serde_json::{json, Map, Value};
+    use tracing_log::LogTracer;
+    use tracing_subscriber::{
+        fmt::{MakeWriter, SubscriberBuilder},
+        Layer,
+    };
 
     use crate::{
         utils::{Labels, Tags},
         ECSLayerBuilder,
     };
+
+    static START: Once = Once::new();
+
+    pub(crate) struct MockWriter {
+        buf: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl MockWriter {
+        pub(crate) fn new(buf: Arc<Mutex<Vec<u8>>>) -> Self {
+            Self { buf }
+        }
+
+        pub(crate) fn map_error<Guard>(err: TryLockError<Guard>) -> io::Error {
+            match err {
+                TryLockError::WouldBlock => io::Error::from(io::ErrorKind::WouldBlock),
+                TryLockError::Poisoned(_) => io::Error::from(io::ErrorKind::Other),
+            }
+        }
+
+        pub(crate) fn buf(&self) -> io::Result<MutexGuard<'_, Vec<u8>>> {
+            self.buf.try_lock().map_err(Self::map_error)
+        }
+    }
+
+    impl io::Write for MockWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.buf()?.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.buf()?.flush()
+        }
+    }
+
+    #[derive(Clone, Default)]
+    pub(crate) struct MockMakeWriter {
+        buf: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl MockMakeWriter {
+        pub(crate) fn buf(&self) -> MutexGuard<'_, Vec<u8>> {
+            self.buf.lock().unwrap()
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for MockMakeWriter {
+        type Writer = MockWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            MockWriter::new(self.buf.clone())
+        }
+    }
+
+    fn run_test<T>(builder: ECSLayerBuilder, test: T) -> Vec<Map<String, Value>>
+    where
+        T: FnOnce() -> (),
+    {
+        START.call_once(|| LogTracer::init().unwrap());
+
+        let writer = MockMakeWriter::default();
+
+        let noout = SubscriberBuilder::default().with_writer(|| sink()).finish();
+        let subscriber = builder
+            .build_with_writer(writer.clone())
+            .with_subscriber(noout);
+        tracing_core::dispatcher::with_default(
+            &tracing_core::dispatcher::Dispatch::new(subscriber),
+            test,
+        );
+        let bytes: Vec<u8> = writer.buf().iter().copied().collect();
+        let mut ret = Vec::new();
+        for line in BufReader::new(bytes.as_slice()).lines() {
+            let line = line.expect("Unable to read line");
+            println!("{line}");
+            ret.push(serde_json::from_str(&line).expect("Invalid json line"));
+        }
+        ret
+    }
 
     #[derive(Serialize)]
     struct ExtraTestField {
@@ -358,62 +478,144 @@ mod test {
         labels: Labels,
     }
 
+    /// General tests
     #[test]
     fn test() {
-        let buf: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
-        ECSLayerBuilder::default()
-            //.with_writer(buf)
-            .with_extra_fields(ExtraTestField {
-                tags: vec!["tag1".into(), "tag2".to_string().into()],
-                labels: [("l1".into(), "v1".into()), ("l2".into(), "v2".into())]
-                    .into_iter()
-                    .collect(),
-            })
-            .unwrap()
-            .stdout()
-            .install()
-            .unwrap();
+        let result = run_test(ECSLayerBuilder::default(), || {
+            log::info!("A classic log message outside spans");
+            tracing::info!("A classic tracing event outside spans");
+            let span = tracing::info_span!("span1", foo = "bar", transaction.id = "abcdef");
+            let enter = span.enter();
+            log::info!("A classic log inside a span");
+            tracing::info!(target: "foo_event_target", "A classic tracing event inside a span");
+            drop(enter);
+            log::info!(target: "foo_bar_target", "outside a span");
+        });
+        assert_eq!(result.len(), 5);
+        assert_string(
+            result[0].get("message"),
+            Some("A classic log message outside spans"),
+        );
+        assert_string(
+            result[1].get("message"),
+            Some("A classic tracing event outside spans"),
+        );
+        assert_string(
+            result[2].get("message"),
+            Some("A classic log inside a span"),
+        );
+        assert_string(
+            result[3].get("message"),
+            Some("A classic tracing event inside a span"),
+        );
+        assert_string(result[0].get("span.name"), None);
+        assert_string(result[1].get("span.name"), None);
+        assert_string(result[2].get("span.name"), Some("span1"));
+        assert_string(result[4].get("span.name"), None);
+        assert_string(result[3].get("span.name"), Some("span1"));
+        assert_string(result[0].get("transaction.id"), None);
+        assert_string(result[1].get("transaction.id"), None);
+        assert_string(result[2].get("transaction.id"), Some("abcdef"));
+        assert_string(result[3].get("transaction.id"), Some("abcdef"));
+        assert_string(result[4].get("transaction.id"), None);
 
-        tracing::error!("this is an error");
+        // log.logger (aka rust target)
+        assert_string(result[0].get("log.logger"), Some("tracing_ecs::test"));
+        assert_string(result[1].get("log.logger"), Some("tracing_ecs::test"));
+        assert_string(result[2].get("log.logger"), Some("tracing_ecs::test"));
+        assert_string(result[3].get("log.logger"), Some("foo_event_target"));
+        assert_string(result[4].get("log.logger"), Some("foo_bar_target"));
 
-        let span = span!(Level::INFO, "my span", myvalue = 112);
-        let _enter = span.enter();
-        let span = span!(Level::INFO, "nested", tx.id = "123", user = "jean");
-        let _enter = span.enter();
-        tracing::info!("plop");
+        // logs have a @timestamp value
+        assert!(result[0]
+            .get("@timestamp")
+            .cloned()
+            .filter(Value::is_string)
+            .is_some());
+        assert!(result[1]
+            .get("@timestamp")
+            .cloned()
+            .filter(Value::is_string)
+            .is_some());
     }
+
+    fn assert_string(value: Option<&Value>, expected: Option<&str>) {
+        assert_eq!(
+            value,
+            expected.map(|s| Value::String(s.to_string())).as_ref()
+        );
+    }
+
+    /// Extra fields: we can pass anything that is Serialize as extra fields
     #[test]
-    fn test_extra_fields_json() {
-        ECSLayerBuilder::default()
-            .with_extra_fields(json!({
-                "labels": {
-                    "env": "prod",
-                },
-                "tags": ["service", "foobar"]
-            }))
-            .unwrap()
-            .stdout()
-            .install()
-            .unwrap();
-        tracing::info!("Alright!");
+    fn test_extra_fields() {
+        let value = json!({
+            "tags": ["t1", "t2"],
+            "labels": {
+                "env": "prod",
+                "service": "foobar",
+            }
+        });
+        let result = run_test(
+            ECSLayerBuilder::default()
+                .with_extra_fields(&value)
+                .unwrap(),
+            || {
+                log::info!("A classic log message outside spans");
+                tracing::info!("A classic tracing event outside spans");
+                tracing::info!(tags = 123, "A classic tracing event outside spans");
+            },
+        );
+        assert_eq!(result.len(), 3);
+        assert_string(
+            result[0].get("message"),
+            Some("A classic log message outside spans"),
+        );
+        assert_string(
+            result[1].get("message"),
+            Some("A classic tracing event outside spans"),
+        );
+        assert_eq!(result[0].get("tags"), value.get("tags"));
+        assert_eq!(result[1].get("tags"), value.get("tags"));
+        assert_eq!(result[1].get("labels"), value.get("labels"));
+        assert_eq!(result[1].get("labels"), value.get("labels"));
+
+        // a span or an event overrode the tags value, the last prevails (in our case the event value)
+        assert_eq!(result[2].get("tags"), Some(&json!(123)));
     }
 
     #[test]
-    fn test_attribute_name_mapping() {
-        ECSLayerBuilder::default()
-            .with_attribute_mapper(
-                |_span_name: &str, name: Cow<'static, str>| match name.deref() {
-                    "txid" => "transaction.id".into(),
-                    _ => name,
-                },
-            )
-            .stdout()
-            .install()
-            .unwrap();
-        let span = span!(Level::INFO, "my span", txid = 112, other = "hello");
-        let _enter = span.enter();
-        tracing::info!("Alright!");
+    fn test_spans() {
+        let result = run_test(ECSLayerBuilder::default(), || {
+            tracing::info!("outside");
+            let sp1 = tracing::info_span!("span1", sp1 = "val1", same = "same1");
+            let _enter1 = sp1.enter();
+            tracing::info!("inside 1");
+            let sp2 = tracing::info_span!("span2", sp2 = "val2", same = "same2");
+            let _enter2 = sp2.enter();
+            tracing::info!("inside 2");
+            tracing::info!(same = "last prevails", "inside 2");
+        });
+        // span name
+        assert_string(result[0].get("span.name"), None);
+        assert_string(result[1].get("span.name"), Some("span1"));
+        assert_string(result[2].get("span.name"), Some("span1:span2"));
+        assert_string(result[3].get("span.name"), Some("span1:span2"));
 
-        tracing::event!(Level::INFO, greetings = "hello")
+        // span attributes
+        assert_string(result[0].get("sp1"), None);
+        assert_string(result[1].get("sp1"), Some("val1"));
+        assert_string(result[2].get("sp1"), Some("val1"));
+        assert_string(result[3].get("sp1"), Some("val1"));
+
+        assert_string(result[0].get("sp2"), None);
+        assert_string(result[1].get("sp2"), None);
+        assert_string(result[2].get("sp2"), Some("val2"));
+        assert_string(result[3].get("sp2"), Some("val2"));
+
+        assert_string(result[0].get("same"), None);
+        assert_string(result[1].get("same"), Some("same1"));
+        assert_string(result[2].get("same"), Some("same2"));
+        assert_string(result[3].get("same"), Some("last prevails"));
     }
 }

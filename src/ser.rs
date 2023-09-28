@@ -1,6 +1,8 @@
-///! Types used in json serialization
+//! Types used in json serialization
+//
 use serde::Serialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use tracing_core::Metadata;
 
 #[derive(Serialize)]
@@ -39,7 +41,7 @@ pub(crate) struct LogFile<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) line: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) name: Option<&'a str>,
+    pub(crate) name: Option<Cow<'a, str>>,
 }
 
 impl<'a> From<&Metadata<'a>> for LogOrigin<'a> {
@@ -47,7 +49,7 @@ impl<'a> From<&Metadata<'a>> for LogOrigin<'a> {
         Self {
             file: LogFile {
                 line: meta.line(),
-                name: meta.file(),
+                name: meta.file().map(|f| f.into()),
             },
         }
     }

@@ -40,36 +40,26 @@ impl<'a, 'm> Visit for FieldVisitor<'a, 'm> {
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         let value = format!("{:?}", value);
         let field_name = field.name();
-        match field_name {
-            _ => self.record_value(field_name, value),
-        }
+        self.record_value(field_name, value);
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
         let field_name = field.name();
-        match field_name {
-            _ => self.record_value(field_name, value),
-        }
+        self.record_value(field_name, value);
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
         let field_name = field.name();
-        match field_name {
-            _ => self.record_value(field_name, value),
-        }
+        self.record_value(field_name, value);
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
         let field_name = field.name();
-        match field_name {
-            _ => self.record_value(field_name, value),
-        }
+        self.record_value(field_name, value);
     }
 
     fn record_str(&mut self, field: &Field, value: &str) {
         let field_name = field.name();
-        match field_name {
-            _ => self.record_value(field_name, value),
-        }
+        self.record_value(field_name, value);
     }
 }
