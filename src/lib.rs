@@ -98,12 +98,13 @@ use tracing_subscriber::Layer;
 mod ser;
 mod visitor;
 
-/// This span_name is used when processing event attributes
+/// This span_name is used when calling the current `AttributeMapper` while
+/// processing event attributes.
 pub const EVENT_SPAN_NAME: &str = "__EVENT__";
 
-/// Map span attributes to record name
+/// Map span attributes name to ECS field name
 pub trait AttributeMapper: Send + Sync + 'static {
-    /// Given a span name and the name of the attribute,
+    /// Given a span name and the name of an attribute,
     /// return the mapped attribute name
     fn map(&self, span_name: &str, name: Cow<'static, str>) -> Cow<'static, str>;
 }
@@ -132,14 +133,16 @@ impl<W> ECSLayer<W>
 where
     W: for<'writer> MakeWriter<'writer> + 'static + Send + Sync,
 {
-    /// Installs the layer in a no-output tracing subscriber. The tracing subscriber is configured with
-    /// the default `EnvFilter`.
+    /// Installs the layer in a no-output tracing subscriber.
+    ///
+    /// The tracing subscriber is configured with `EnvFilter::from_default_env()`.
     ///
     /// This also takes care of installing the [`tracing-log`](https://crates.io/crates/tracing-log)
-    /// compatibility layer so regular logging done from the [`log` crate](https://crates.io/crates/log)
+    /// compatibility layer so regular logging done from the [`log` crate](https://crates.io/crates/log) will
+    /// be correctly reported as tracing events.
     ///
     /// This is an opinionated way to use this layer. Look at the source of this method if you want a tight control
-    /// of how the underlying is constructed or to disable classic logs to be output along tracing events...
+    /// of how the underlying subscriber is constructed or if you want to disable classic logs to be output as tracing events...
     ///
     pub fn install(self) -> Result<(), Error> {
         let noout = SubscriberBuilder::default()
