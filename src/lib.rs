@@ -67,6 +67,7 @@ use serde_json::Map;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io;
 use std::io::sink;
 use std::io::stderr;
 use std::io::stdout;
@@ -81,6 +82,7 @@ use tracing_core::Event;
 use tracing_core::Subscriber;
 use tracing_log::log_tracer::SetLoggerError;
 use tracing_log::LogTracer;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::SubscriberBuilder;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
@@ -113,16 +115,16 @@ where
 ///
 pub struct ECSLayer<W>
 where
-    W: Write,
+    W: for<'writer> MakeWriter<'writer> + 'static,
 {
-    output: Mutex<W>,
+    writer: W,
     attribute_mapper: Box<dyn AttributeMapper>,
     extra_fields: serde_json::Map<String, Value>,
 }
 
 impl<W> ECSLayer<W>
 where
-    W: Write + 'static + Send + Sync,
+    W: for<'writer> MakeWriter<'writer> + 'static + Send + Sync,
 {
     /// Installs the layer in a no-output tracing subscriber.
     ///
@@ -145,7 +147,7 @@ where
 impl<W, S> Layer<S> for ECSLayer<W>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    W: Write + 'static,
+    W: for<'writer> MakeWriter<'writer> + 'static,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("span not found, this is a bug");
@@ -188,7 +190,6 @@ where
         let mut span_fields = HashMap::<Cow<'static, str>, Value>::new();
 
         // Get span name
-        //if self.spans {
         let span = ctx.current_span().id().and_then(|id| {
             ctx.span_scope(id).map(|scope| {
                 scope.from_root().fold(String::new(), |mut spans, span| {
@@ -213,16 +214,11 @@ where
             span_fields.insert("span.name".into(), span.into());
         }
 
-        //dbg!(&span_fields);
-        //}
-
         // Extract metadata
         // Insert level
         let metadata = event.metadata();
         let level = metadata.level().as_str();
         let target = metadata.target();
-        //dbg!(level);
-        //dbg!(target);
 
         // extract fields
         let mut fields = HashMap::with_capacity(16);
@@ -258,7 +254,7 @@ where
                 )
                 .collect(),
         };
-        let mut writer = self.output.lock().unwrap();
+        let mut writer = self.writer.make_writer_for(metadata);
         let _ = serde_json::to_writer(writer.by_ref(), &line);
         let _ = writer.write(&[b'\n']);
     }
@@ -309,17 +305,20 @@ impl ECSLayerBuilder {
         self
     }
 
-    pub fn stderr(self) -> ECSLayer<Stderr> {
-        self.with_writer(stderr())
+    pub fn stderr(self) -> ECSLayer<fn() -> Stderr> {
+        self.with_writer(io::stderr)
     }
 
-    pub fn stdout(self) -> ECSLayer<Stdout> {
-        self.with_writer(stdout())
+    pub fn stdout(self) -> ECSLayer<fn() -> Stdout> {
+        self.with_writer(io::stdout)
     }
 
-    pub fn with_writer<W: Write>(self, output: W) -> ECSLayer<W> {
+    pub fn with_writer<W>(self, writer: W) -> ECSLayer<W>
+    where
+        W: for<'writer> MakeWriter<'writer> + 'static,
+    {
         ECSLayer {
-            output: Mutex::new(output),
+            writer,
             attribute_mapper: self.attribute_mapper,
             extra_fields: self.extra_fields.unwrap_or_default(),
         }
