@@ -144,7 +144,7 @@ where
     pub fn install(self) -> Result<(), Error> {
         let noout = SubscriberBuilder::default()
             .with_writer(sink)
-            .with_env_filter(EnvFilter::default())
+            .with_env_filter(EnvFilter::from_default_env())
             .finish();
         let subscriber = self.with_subscriber(noout);
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
