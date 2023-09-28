@@ -1,5 +1,5 @@
 //! Tracing subscriber that outputs json log lines compatible with ECS
-//! (Elastic Common Schema).
+//! ([Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/ecs-reference.html)).
 //!
 //! More specifically, this crate provides a [`Layer`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/layer/trait.Layer.html)
 //! implementation that can be composed with an existing `Subscriber` from the

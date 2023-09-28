@@ -1,18 +1,10 @@
 # tracing-ecs
 
-Output json log lines in the ECS ([Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/ecs-reference.html)) log format.
-
-## Usage
-
-```rust
-
-
-
-```
+Tracing subscriber that outputs json log lines in the ECS ([Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/ecs-reference.html)) log format.
 
 ## Status
 
-**Work in Progess**, code is messy
+**Work in Progess**
 
 ## License
 
