@@ -1,4 +1,4 @@
-# tracing-ecs
+# tracing-ecs [![crates.io](https://img.shields.io/crates/v/tracing-ecs.svg)](https://crates.io/crates/tracing-ecs) [![docs.rs](https://docs.rs/tracing-ecs/badge.svg)](https://docs.rs/tracing-ecs/)
 
 Tracing subscriber that outputs json log lines in the ECS ([Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/ecs-reference.html)) log format.
 
