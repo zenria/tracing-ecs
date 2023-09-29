@@ -95,28 +95,11 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
+mod attribute_mapper;
 mod ser;
 mod visitor;
 
-/// This span_name is used when calling the current `AttributeMapper` while
-/// processing event attributes.
-pub const EVENT_SPAN_NAME: &str = "__EVENT__";
-
-/// Map span attributes name to ECS field name
-pub trait AttributeMapper: Send + Sync + 'static {
-    /// Given a span name and the name of an attribute,
-    /// return the mapped attribute name
-    fn map(&self, span_name: &str, name: Cow<'static, str>) -> Cow<'static, str>;
-}
-
-impl<F> AttributeMapper for F
-where
-    F: for<'a> Fn(&'a str, Cow<'static, str>) -> Cow<'static, str> + Send + Sync + 'static,
-{
-    fn map(&self, span_name: &str, name: Cow<'static, str>) -> Cow<'static, str> {
-        self(span_name, name)
-    }
-}
+pub use attribute_mapper::{AttributeMapper, EVENT_SPAN_NAME};
 
 /// The final Layer object to be used in a `tracing-subscriber` layered subscriber.
 ///
@@ -387,11 +370,11 @@ pub enum Error {
 mod test {
 
     use std::{
-        borrow::{Borrow, Cow},
         io::{self, sink, BufRead, BufReader},
         sync::{Arc, Mutex, MutexGuard, Once, TryLockError},
     };
 
+    use maplit::hashmap;
     use serde_json::{json, Map, Value};
     use tracing_log::LogTracer;
     use tracing_subscriber::{
@@ -625,12 +608,10 @@ mod test {
         let result = run_test(
             ECSLayerBuilder::default().with_attribute_mapper(
                 // this mapper will change "key1" name into "foobar" only in the "span1" span
-                |span_name: &str, name: Cow<'static, str>| match span_name {
-                    "span1" => match name.borrow() {
-                        "key1" => "foobar".into(),
-                        _ => name,
-                    },
-                    _ => name,
+                hashmap! {
+                    "span1" => hashmap! {
+                        "key1" => "foobar"
+                    }
                 },
             ),
             || {
