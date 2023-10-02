@@ -497,23 +497,44 @@ mod test {
             result[3].get("message"),
             Some("A classic tracing event inside a span"),
         );
-        assert_string(result[0].get("span.name"), None);
-        assert_string(result[1].get("span.name"), None);
-        assert_string(result[2].get("span.name"), Some("span1"));
+        assert_string(result[0].get("span"), None);
+        assert_string(result[1].get("span"), None);
+        assert_string(result[2].get("span").unwrap().get("name"), Some("span1"));
         assert_string(result[4].get("span.name"), None);
-        assert_string(result[3].get("span.name"), Some("span1"));
-        assert_string(result[0].get("transaction.id"), None);
-        assert_string(result[1].get("transaction.id"), None);
-        assert_string(result[2].get("transaction.id"), Some("abcdef"));
-        assert_string(result[3].get("transaction.id"), Some("abcdef"));
-        assert_string(result[4].get("transaction.id"), None);
+        assert_string(result[3].get("span").unwrap().get("name"), Some("span1"));
+        assert_string(result[0].get("transaction"), None);
+        assert_string(result[1].get("transaction"), None);
+        assert_string(
+            result[2].get("transaction").unwrap().get("id"),
+            Some("abcdef"),
+        );
+        assert_string(
+            result[3].get("transaction").unwrap().get("id"),
+            Some("abcdef"),
+        );
+        assert_string(result[4].get("transaction"), None);
 
         // log.logger (aka rust target)
-        assert_string(result[0].get("log.logger"), Some("tracing_ecs::test"));
-        assert_string(result[1].get("log.logger"), Some("tracing_ecs::test"));
-        assert_string(result[2].get("log.logger"), Some("tracing_ecs::test"));
-        assert_string(result[3].get("log.logger"), Some("foo_event_target"));
-        assert_string(result[4].get("log.logger"), Some("foo_bar_target"));
+        assert_string(
+            result[0].get("log").unwrap().get("logger"),
+            Some("tracing_ecs::test"),
+        );
+        assert_string(
+            result[1].get("log").unwrap().get("logger"),
+            Some("tracing_ecs::test"),
+        );
+        assert_string(
+            result[2].get("log").unwrap().get("logger"),
+            Some("tracing_ecs::test"),
+        );
+        assert_string(
+            result[3].get("log").unwrap().get("logger"),
+            Some("foo_event_target"),
+        );
+        assert_string(
+            result[4].get("log").unwrap().get("logger"),
+            Some("foo_bar_target"),
+        );
 
         // logs have a @timestamp value
         assert!(result[0]
