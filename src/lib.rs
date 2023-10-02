@@ -18,6 +18,11 @@
 //!
 //! This behavior can be customized by implementing the [`AttributeMapper`](trait.AttributeMapper.html) trait.
 //!
+//! # JSON Normalization
+//!
+//! Output is normalized by default so there is no dot anymore in the resulting json keys. See
+//! [https://www.elastic.co/guide/en/ecs/current/ecs-guidelines.html]
+//!
 //! # Examples
 //!
 //! Install a default subscriber that outputs json to stdout:
@@ -275,7 +280,7 @@ where
                 .collect(),
         };
         let mut writer = self.writer.make_writer_for(metadata);
-        let _ = serde_json::to_writer(writer.by_ref(), &line);
+        let _ = serde_json::to_writer(writer.by_ref(), &line.normalize());
         let _ = writer.write(&[b'\n']);
     }
 }
@@ -580,11 +585,17 @@ mod test {
             tracing::info!("inside 2");
             tracing::info!(same = "last prevails", "inside 2");
         });
-        // span name
-        assert_string(result[0].get("span.name"), None);
-        assert_string(result[1].get("span.name"), Some("span1"));
-        assert_string(result[2].get("span.name"), Some("span1:span2"));
-        assert_string(result[3].get("span.name"), Some("span1:span2"));
+        // span name (note that json is normalized so there is no dot anymore in keys)
+        assert_string(result[0].get("span"), None);
+        assert_string(result[1].get("span").unwrap().get("name"), Some("span1"));
+        assert_string(
+            result[2].get("span").unwrap().get("name"),
+            Some("span1:span2"),
+        );
+        assert_string(
+            result[3].get("span").unwrap().get("name"),
+            Some("span1:span2"),
+        );
 
         // span attributes
         assert_string(result[0].get("sp1"), None);
