@@ -23,6 +23,8 @@
 //! Output is normalized by default so there is no dot anymore in the resulting json keys. See
 //! <https://www.elastic.co/guide/en/ecs/current/ecs-guidelines.html>
 //!
+//! See [ECSLayerBuilder.normalize_json](struct.ECSLayerBuilder.html#method.normalize_json)
+//!
 //! # Examples
 //!
 //! Install a default subscriber that outputs json to stdout:
@@ -357,13 +359,13 @@ impl ECSLayerBuilder {
     /// Control the normalization (keys de-dotting) of the generated json
     /// in the sense of <https://www.elastic.co/guide/en/ecs/current/ecs-guidelines.html>.
     ///
-    /// By default, normalization is enabled, thus logging `host.hostname="localhost"` will be output as
+    /// By default, normalization is enabled, thus logging `host.hostname="localhost"` will output:
     ///
     /// ```json
     /// {"host":{"hostname": "localhost"}}
     /// ```
     ///
-    /// With normalization disabled, it would be logged:
+    /// With normalization disabled:
     ///
     /// ```json
     /// {"host.hostname": "localhost"}
