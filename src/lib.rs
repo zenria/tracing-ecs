@@ -115,6 +115,7 @@ where
     writer: W,
     attribute_mapper: Box<dyn AttributeMapper>,
     extra_fields: serde_json::Map<String, Value>,
+    normalize_json: bool,
 }
 
 impl<W> ECSLayer<W>
@@ -280,7 +281,11 @@ where
                 .collect(),
         };
         let mut writer = self.writer.make_writer_for(metadata);
-        let _ = serde_json::to_writer(writer.by_ref(), &line.normalize());
+        let _ = if self.normalize_json {
+            serde_json::to_writer(writer.by_ref(), &line.normalize())
+        } else {
+            serde_json::to_writer(writer.by_ref(), &line)
+        };
         let _ = writer.write(&[b'\n']);
     }
 }
@@ -306,10 +311,20 @@ fn value_to_string(value: Value) -> String {
 ///     .unwrap();
 /// ```
 ///
-#[derive(Default)]
 pub struct ECSLayerBuilder {
     extra_fields: Option<serde_json::Map<String, Value>>,
     attribute_mapper: Box<dyn AttributeMapper>,
+    normalize_json: bool,
+}
+
+impl Default for ECSLayerBuilder {
+    fn default() -> Self {
+        Self {
+            extra_fields: Default::default(),
+            attribute_mapper: Default::default(),
+            normalize_json: true,
+        }
+    }
 }
 
 impl Default for Box<dyn AttributeMapper> {
@@ -339,6 +354,34 @@ impl ECSLayerBuilder {
         self
     }
 
+    /// Control the normalization (keys de-dotting) of the generated json
+    /// in the sense of [https://www.elastic.co/guide/en/ecs/current/ecs-guidelines.html].
+    ///
+    /// By default, normalization is enabled, thus logging `host.hostname="localhost"` will be output as
+    ///
+    /// ```json
+    /// {"host":{"hostname": "localhost"}}
+    /// ```
+    ///
+    /// With normalization disabled, it would be logged:
+    ///
+    /// ```json
+    /// {"host.hostname": "localhost"}
+    /// ```
+    ///
+    /// Depending on your use case you may want to disable normalization if it's done
+    /// elsewhere in your log processing pipeline.
+    ///
+    /// Benchmarks suggests a 30% speed up on log generation. (benches run on an Apple M2 Pro) it will
+    /// also allocate less because, normalization recursively recreates a brand new json `Value` (not measured).
+    ///
+    pub fn normalize_json(self, normalize_json: bool) -> Self {
+        Self {
+            normalize_json,
+            ..self
+        }
+    }
+
     pub fn stderr(self) -> ECSLayer<fn() -> Stderr> {
         self.build_with_writer(io::stderr)
     }
@@ -355,6 +398,7 @@ impl ECSLayerBuilder {
             writer,
             attribute_mapper: self.attribute_mapper,
             extra_fields: self.extra_fields.unwrap_or_default(),
+            normalize_json: self.normalize_json,
         }
     }
 }

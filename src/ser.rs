@@ -26,7 +26,7 @@ pub(crate) struct ECSLogLine<'a> {
 }
 
 impl<'a> ECSLogLine<'a> {
-    /// Normalize JSON dotted fields to nested maps.
+    /// Normalize JSON dotted fields to nested maps. Aka de-dot fields into nested json objects.
     ///
     /// https://www.elastic.co/guide/en/ecs/current/ecs-guidelines.html
     ///
