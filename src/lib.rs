@@ -711,4 +711,49 @@ mod test {
         assert_string(result[1].get("other1"), Some("o1"));
         assert_string(result[1].get("other2"), Some("o2"));
     }
+
+    #[test]
+    fn test_normalization() {
+        let value = json!({
+            "host.hostname": "localhost"
+        });
+        let result = run_test(
+            ECSLayerBuilder::default()
+                .with_extra_fields(&value)
+                .unwrap(),
+            || {
+                tracing::info!(source.ip = "1.2.3.4", "hello world");
+            },
+        );
+        assert_eq!(
+            result[0].get("host").unwrap(),
+            &json!({
+                "hostname": "localhost",
+            })
+        );
+        assert_eq!(
+            result[0].get("source").unwrap(),
+            &json!({
+                "ip": "1.2.3.4",
+            })
+        );
+    }
+    #[test]
+
+    fn test_normalization_disabled() {
+        let value = json!({
+            "host.hostname": "localhost"
+        });
+        let result = run_test(
+            ECSLayerBuilder::default()
+                .normalize_json(false)
+                .with_extra_fields(&value)
+                .unwrap(),
+            || {
+                tracing::info!(source.ip = "1.2.3.4", "hello world");
+            },
+        );
+        assert_eq!(result[0].get("host.hostname").unwrap(), &json!("localhost"));
+        assert_eq!(result[0].get("source.ip").unwrap(), &json!("1.2.3.4"));
+    }
 }
