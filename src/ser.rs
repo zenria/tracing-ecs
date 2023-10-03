@@ -34,7 +34,7 @@ impl<'a> ECSLogLine<'a> {
     /// > the nesting of JSON objects is done for you automatically. If you’re ingesting
     /// > to Elasticsearch using the API, your fields must be nested objects, not strings containing dots.
     pub(crate) fn normalize(&self) -> Value {
-        let ser = serde_json::to_value(&self).unwrap(); // by construction this will not fail - trust me
+        let ser = serde_json::to_value(self).unwrap(); // by construction this will not fail - trust me
 
         let Value::Object(obj) = ser else {
             panic!("this is not possible!")
@@ -74,7 +74,7 @@ fn normalize_map(destination: &mut Map<String, Value>, map: Map<String, Value>) 
     }
 }
 
-fn insert_in_destination<'a>(destination: &'a mut Map<String, Value>, key: &str, value: Value) {
+fn insert_in_destination(destination: &mut Map<String, Value>, key: &str, value: Value) {
     // iterate over nested keys and construct destination map if needed.
     if let Some((root, rest)) = key.split_once('.') {
         insert_in_destination(
