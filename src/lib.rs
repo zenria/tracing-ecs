@@ -261,7 +261,7 @@ where
             .map(value_to_string)
             .unwrap_or_default();
         let line = ECSLogLine {
-            timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
             message,
             level,
             log_origin,
