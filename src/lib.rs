@@ -195,7 +195,6 @@ where
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        // GELF object
         let mut span_fields = HashMap::<Cow<'static, str>, Value>::new();
 
         // Get span name
@@ -768,8 +767,8 @@ mod test {
         let result = run_test(ECSLayerBuilder::default(), || {
             let mut join_handles = Vec::new();
             for i in 0..5 {
-                // multi threaded test are a bit awkward as we need to
-                // install the current dispatcher to each thread.
+                // doing multi threaded test is a bit awkward as the current dispatcher needs
+                // to be installed into each spawned thread.
                 tracing_core::dispatcher::get_default(|dispatch| {
                     let dispatch = dispatch.clone();
                     join_handles.push(thread::spawn(move || {
