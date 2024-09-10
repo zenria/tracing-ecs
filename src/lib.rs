@@ -86,7 +86,9 @@ use std::collections::HashMap;
 use std::io;
 use std::io::sink;
 use std::io::Stderr;
-use std::io::{Stdout, Write};
+use std::io::Stdout;
+use std::io::Write;
+use std::sync::Mutex;
 use tracing_core::dispatcher::SetGlobalDefaultError;
 use tracing_core::span::Attributes;
 use tracing_core::span::Id;
@@ -114,7 +116,7 @@ pub struct ECSLayer<W>
 where
     W: for<'writer> MakeWriter<'writer> + 'static,
 {
-    writer: W,
+    writer: Mutex<W>,
     attribute_mapper: Box<dyn AttributeMapper>,
     extra_fields: serde_json::Map<String, Value>,
     normalize_json: bool,
@@ -282,7 +284,8 @@ where
                 )
                 .collect(),
         };
-        let mut writer = self.writer.make_writer_for(metadata);
+        let writer = self.writer.lock().unwrap(); // below code will not poison the lock so it should be safe here to unwrap()
+        let mut writer = writer.make_writer_for(metadata);
         let _ = if self.normalize_json {
             serde_json::to_writer(writer.by_ref(), &line.normalize())
         } else {
@@ -397,7 +400,7 @@ impl ECSLayerBuilder {
         W: for<'writer> MakeWriter<'writer> + 'static,
     {
         ECSLayer {
-            writer,
+            writer: Mutex::new(writer),
             attribute_mapper: self.attribute_mapper,
             extra_fields: self.extra_fields.unwrap_or_default(),
             normalize_json: self.normalize_json,
@@ -423,6 +426,7 @@ mod test {
     use std::{
         io::{self, sink, BufRead, BufReader},
         sync::{Arc, Mutex, MutexGuard, Once, TryLockError},
+        thread::{self, JoinHandle},
     };
 
     use maplit::hashmap;
@@ -757,5 +761,30 @@ mod test {
         );
         assert_eq!(result[0].get("host.hostname").unwrap(), &json!("localhost"));
         assert_eq!(result[0].get("source.ip").unwrap(), &json!("1.2.3.4"));
+    }
+
+    #[test]
+    fn test_interleaving_logs() {
+        let result = run_test(ECSLayerBuilder::default(), || {
+            let mut join_handles = Vec::new();
+            for i in 0..5 {
+                // multi threaded test are a bit awkward as we need to
+                // install the current dispatcher to each thread.
+                tracing_core::dispatcher::get_default(|dispatch| {
+                    let dispatch = dispatch.clone();
+                    join_handles.push(thread::spawn(move || {
+                        tracing_core::dispatcher::with_default(&dispatch, move || {
+                            for j in 0..1000 {
+                                tracing::info!(thread = i, iteration = j, "hello world");
+                            }
+                        });
+                    }));
+                });
+            }
+            for join_handle in join_handles {
+                join_handle.join().unwrap();
+            }
+        });
+        assert_eq!(result.len(), 5000);
     }
 }
