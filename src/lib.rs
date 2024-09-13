@@ -425,7 +425,7 @@ mod test {
     use std::{
         io::{self, sink, BufRead, BufReader},
         sync::{Arc, Mutex, MutexGuard, Once, TryLockError},
-        thread::{self, JoinHandle},
+        thread::{self},
     };
 
     use maplit::hashmap;
