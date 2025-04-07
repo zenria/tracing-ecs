@@ -18,7 +18,8 @@ pub(crate) struct ECSLogLine<'a> {
     #[serde(rename = "log.logger")]
     pub(crate) logger: &'a str,
 
-    #[serde(rename = "log.origin", skip_serializing_if = "LogOrigin::is_empty")]
+    #[serde(flatten)]
+    #[serde(skip_serializing_if = "LogOrigin::is_empty")]
     pub(crate) log_origin: LogOrigin<'a>,
 
     #[serde(flatten)]
@@ -50,12 +51,17 @@ impl<'a> ECSLogLine<'a> {
 
 #[derive(Serialize)]
 pub(crate) struct LogOrigin<'a> {
-    pub(crate) file: LogFile<'a>,
+    #[serde(rename = "log.origin.file.line")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) line: Option<u32>,
+    #[serde(rename = "log.origin.file.name")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<Cow<'a, str>>,
 }
 
 impl<'a> LogOrigin<'a> {
     pub fn is_empty(&self) -> bool {
-        self.file.line.is_none() && self.file.name.is_none()
+        self.line.is_none() && self.name.is_none()
     }
 }
 
@@ -98,21 +104,11 @@ fn insert_in_destination(destination: &mut Map<String, Value>, key: &str, value:
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct LogFile<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) line: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) name: Option<Cow<'a, str>>,
-}
-
 impl<'a> From<&Metadata<'a>> for LogOrigin<'a> {
     fn from(meta: &Metadata<'a>) -> Self {
         Self {
-            file: LogFile {
-                line: meta.line(),
-                name: meta.file().map(|f| f.into()),
-            },
+            line: meta.line(),
+            name: meta.file().map(|f| f.into()),
         }
     }
 }
