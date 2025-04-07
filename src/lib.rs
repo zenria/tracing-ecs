@@ -76,7 +76,6 @@
 //! ```
 use chrono::Utc;
 use ser::ECSLogLine;
-use ser::LogFile;
 use ser::LogOrigin;
 use serde::Serialize;
 use serde_json::Map;
@@ -249,10 +248,8 @@ where
             if let (Some(file), Some(line)) = (fields.remove("log.file"), fields.remove("log.line"))
             {
                 log_origin = LogOrigin {
-                    file: LogFile {
-                        line: line.as_u64().and_then(|u| u32::try_from(u).ok()),
-                        name: file.as_str().map(|file| file.to_owned().into()),
-                    },
+                    line: line.as_u64().and_then(|u| u32::try_from(u).ok()),
+                    name: file.as_str().map(|file| file.to_owned().into()),
                 }
             }
         }
@@ -742,6 +739,7 @@ mod test {
                 "ip": "1.2.3.4",
             })
         );
+        assert_eq!(result[0]["log"]["origin"]["file"].get("name").unwrap(), &json!("src/lib.rs"));
     }
     #[test]
 
@@ -760,6 +758,7 @@ mod test {
         );
         assert_eq!(result[0].get("host.hostname").unwrap(), &json!("localhost"));
         assert_eq!(result[0].get("source.ip").unwrap(), &json!("1.2.3.4"));
+        assert_eq!(result[0].get("log.origin.file.name").unwrap(), &json!("src/lib.rs"));
     }
 
     #[test]
