@@ -1,5 +1,5 @@
 //! Types used in json serialization
-//
+
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
@@ -23,6 +23,45 @@ pub(crate) struct ECSLogLine<'a> {
 
     #[serde(flatten)]
     pub(crate) dynamic_fields: serde_json::Map<String, Value>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ECSSpanEvent {
+    #[serde(rename = "@timestamp")]
+    pub(crate) timestamp: String,
+    #[serde(rename = "event.kind")]
+    pub(crate) event_kind: &'static str,
+    #[serde(rename = "event.action")]
+    pub(crate) event_action: &'static str,
+    #[serde(rename = "span.id")]
+    pub(crate) span_id: String,
+    #[serde(rename = "span.name")]
+    pub(crate) span_name: String,
+    #[serde(flatten)]
+    pub(crate) dynamic_fields: Map<String, Value>,
+}
+
+impl ECSSpanEvent {
+    /// Normalize JSON dotted fields to nested maps. Aka de-dot fields into nested json objects.
+    ///
+    /// https://www.elastic.co/guide/en/ecs/current/ecs-guidelines.html
+    ///
+    /// > The document structure should be nested JSON objects. If you use Beats or Logstash,
+    /// > the nesting of JSON objects is done for you automatically. If you’re ingesting
+    /// > to Elasticsearch using the API, your fields must be nested objects, not strings containing dots.
+    pub(crate) fn normalize(&self) -> Value {
+        let ser = serde_json::to_value(self).unwrap(); // by construction this will not fail - trust me
+
+        let Value::Object(obj) = ser else {
+            panic!("this is not possible!")
+        };
+
+        let mut ret: Map<String, Value> = Map::with_capacity(obj.len());
+
+        normalize_map(&mut ret, obj);
+
+        Value::Object(ret)
+    }
 }
 
 impl<'a> ECSLogLine<'a> {

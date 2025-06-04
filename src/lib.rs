@@ -76,6 +76,7 @@
 //! ```
 use chrono::Utc;
 use ser::ECSLogLine;
+use ser::ECSSpanEvent;
 use ser::LogFile;
 use ser::LogOrigin;
 use serde::Serialize;
@@ -97,6 +98,7 @@ use tracing_core::Event;
 use tracing_core::Subscriber;
 use tracing_log::log_tracer::SetLoggerError;
 use tracing_log::LogTracer;
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::SubscriberBuilder;
 use tracing_subscriber::layer::Context;
@@ -120,6 +122,7 @@ where
     attribute_mapper: Box<dyn AttributeMapper>,
     extra_fields: serde_json::Map<String, Value>,
     normalize_json: bool,
+    span_events: FmtSpan,
 }
 
 impl<W> ECSLayer<W>
@@ -141,6 +144,7 @@ where
         let noout = SubscriberBuilder::default()
             .with_writer(sink)
             .with_env_filter(EnvFilter::from_default_env())
+            .with_span_events(FmtSpan::EXIT)
             .finish();
         let subscriber = self.with_subscriber(noout);
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
@@ -153,12 +157,64 @@ where
     }
 }
 
+impl<W> ECSLayer<W>
+where
+    W: for<'writer> MakeWriter<'writer> + 'static,
+{
+    fn log_span_event<S: Subscriber + for<'a> LookupSpan<'a>>(
+        &self,
+        id: &Id,
+        ctx: &Context<'_, S>,
+        event_action: &'static str,
+    ) {
+        let span = ctx.span(id).expect("span not found, this is a bug");
+        let span_name = span.name();
+        let span_id = id.into_u64().to_string();
+
+        let mut span_fields = HashMap::<Cow<'static, str>, Value>::new();
+        if let Some(span_object) = span.extensions().get::<HashMap<Cow<'static, str>, Value>>() {
+            span_fields.extend(span_object.clone());
+        }
+
+        let span_event = ECSSpanEvent {
+            timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            event_kind: "span",
+            event_action,
+            span_id,
+            span_name: span_name.to_string(),
+            dynamic_fields: self
+                .extra_fields
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .chain(
+                    span_fields
+                        .into_iter()
+                        .map(|(key, value)| (key.to_string(), value)),
+                )
+                .collect(),
+        };
+
+        let writer = self.writer.lock().unwrap();
+        let mut writer = writer.make_writer();
+        let _ = if self.normalize_json {
+            serde_json::to_writer(writer.by_ref(), &span_event.normalize())
+        } else {
+            serde_json::to_writer(writer.by_ref(), &span_event)
+        };
+        let _ = writer.write(&[b'\n']);
+    }
+}
+
 impl<W, S> Layer<S> for ECSLayer<W>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
     W: for<'writer> MakeWriter<'writer> + 'static,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        if self.span_events.clone() & FmtSpan::NEW == FmtSpan::NEW {
+            self.log_span_event(id, &ctx, "new");
+        }
+
         let span = ctx.span(id).expect("span not found, this is a bug");
 
         let mut extensions = span.extensions_mut();
@@ -190,7 +246,25 @@ where
                 self.attribute_mapper.as_ref(),
             );
             values.record(&mut add_field_visitor);
-            extensions.insert(object)
+            extensions.insert(object);
+        }
+    }
+
+    fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
+        if self.span_events.clone() & FmtSpan::ENTER == FmtSpan::ENTER {
+            self.log_span_event(id, &ctx, "enter");
+        }
+    }
+
+    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        if self.span_events.clone() & FmtSpan::EXIT == FmtSpan::EXIT {
+            self.log_span_event(id, &ctx, "exit");
+        }
+    }
+
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        if self.span_events.clone() & FmtSpan::CLOSE == FmtSpan::CLOSE {
+            self.log_span_event(&id, &ctx, "close");
         }
     }
 
@@ -212,7 +286,6 @@ where
                     } else {
                         spans = span.name().to_string();
                     }
-
                     spans
                 })
             })
@@ -253,7 +326,7 @@ where
                         line: line.as_u64().and_then(|u| u32::try_from(u).ok()),
                         name: file.as_str().map(|file| file.to_owned().into()),
                     },
-                }
+                };
             }
         }
 
@@ -319,6 +392,7 @@ pub struct ECSLayerBuilder {
     extra_fields: Option<serde_json::Map<String, Value>>,
     attribute_mapper: Box<dyn AttributeMapper>,
     normalize_json: bool,
+    span_events: FmtSpan,
 }
 
 impl Default for ECSLayerBuilder {
@@ -327,6 +401,7 @@ impl Default for ECSLayerBuilder {
             extra_fields: Default::default(),
             attribute_mapper: Default::default(),
             normalize_json: true,
+            span_events: FmtSpan::NONE,
         }
     }
 }
@@ -355,6 +430,11 @@ impl ECSLayerBuilder {
         M: AttributeMapper,
     {
         self.attribute_mapper = Box::new(attribute_mapper);
+        self
+    }
+
+    pub fn with_span_events(mut self, span_events: FmtSpan) -> Self {
+        self.span_events = span_events;
         self
     }
 
@@ -403,6 +483,7 @@ impl ECSLayerBuilder {
             attribute_mapper: self.attribute_mapper,
             extra_fields: self.extra_fields.unwrap_or_default(),
             normalize_json: self.normalize_json,
+            span_events: self.span_events,
         }
     }
 }
@@ -432,7 +513,7 @@ mod test {
     use serde_json::{json, Map, Value};
     use tracing_log::LogTracer;
     use tracing_subscriber::{
-        fmt::{MakeWriter, SubscriberBuilder},
+        fmt::{format::FmtSpan, MakeWriter, SubscriberBuilder},
         Layer,
     };
 
@@ -785,5 +866,37 @@ mod test {
             }
         });
         assert_eq!(result.len(), 5000);
+    }
+
+    #[test]
+    fn test_span_instrumentation() {
+        let result = run_test(
+            ECSLayerBuilder::default()
+                .normalize_json(false)
+                .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT),
+            || {
+                let span = tracing::info_span!("test_span", foo = "bar");
+                let _enter = span.enter();
+                tracing::info!("inside span");
+            },
+        );
+
+        assert_eq!(result.len(), 3); // span enter, event, span exit
+
+        assert_eq!(result[0].get("event.kind"), Some(&json!("span")));
+        assert_eq!(result[0].get("event.action"), Some(&json!("enter")));
+        assert_eq!(result[0].get("span.name"), Some(&json!("test_span")));
+        assert_eq!(result[0].get("foo"), Some(&json!("bar")));
+        assert!(result[0].get("span.id").unwrap().is_string());
+
+        assert_eq!(result[1].get("message"), Some(&json!("inside span")));
+        assert_eq!(result[1].get("span.name"), Some(&json!("test_span")));
+        assert_eq!(result[1].get("foo"), Some(&json!("bar")));
+
+        assert_eq!(result[2].get("event.kind"), Some(&json!("span")));
+        assert_eq!(result[2].get("event.action"), Some(&json!("exit")));
+        assert_eq!(result[2].get("span.name"), Some(&json!("test_span")));
+        assert_eq!(result[2].get("foo"), Some(&json!("bar")));
+        assert_eq!(result[2].get("span.id"), result[0].get("span.id"));
     }
 }
