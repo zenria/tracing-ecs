@@ -433,6 +433,43 @@ impl ECSLayerBuilder {
         self
     }
 
+    ///
+    /// Setup span events logging. Events supported: `NEW`, `ENTER`, `EXIT`, `CLOSE`.
+    ///
+    /// Each configured span event (eg. enter span) will output a new log event line with an `event` object having the following attributes:
+    /// - `kind`: `span`
+    /// - `action`: either `new`, `enter`, `exit` or `close`
+    ///
+    /// Example:
+    ///
+    /// ```rust
+    /// use tracing_ecs::ECSLayerBuilder;
+    /// use tracing_subscriber::fmt::format::FmtSpan;
+    ///
+    /// ECSLayerBuilder::default()
+    ///     .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
+    ///     .stdout()
+    ///     .install()
+    ///     .unwrap();
+    /// ```
+    ///
+    /// Event log line example:
+    ///
+    /// ```json
+    /// {
+    ///     "@timestamp": "2025-07-24T08:24:19.733176000Z",
+    ///     "event": {
+    ///         "action": "enter",
+    ///         "kind": "span"
+    ///     },
+    ///     "span": {
+    ///         "id": "1",
+    ///         "name": "span_name"
+    ///     }
+    /// }
+    /// ```
+    ///
+    ///
     pub fn with_span_events(mut self, span_events: FmtSpan) -> Self {
         self.span_events = span_events;
         self
